@@ -1,0 +1,17 @@
+{
+    "best_trial_number": 42,
+    "objectives": {
+        "mean_cv_accuracy": 0.9916666666666666,
+        "std_dev": 0.025000000000000012,
+        "mean_gap": 0.030555555555555558
+    },
+    "hyperparameters": {
+        "n_layers": 2,
+        "hidden_size": 22,
+        "dropout_rate": 0.43076112592132326,
+        "activation": "ELU",
+        "optimizer": "RMSprop",
+        "lr": 0.008093377575339577,
+        "batch_size": 16
+    }
+}

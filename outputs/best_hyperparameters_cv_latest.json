@@ -1,0 +1,9 @@
+{
+    "n_layers": 2,
+    "hidden_size": 22,
+    "dropout_rate": 0.43076112592132326,
+    "activation": "ELU",
+    "optimizer": "RMSprop",
+    "lr": 0.008093377575339577,
+    "batch_size": 16
+}
