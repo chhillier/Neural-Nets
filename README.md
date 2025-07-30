@@ -23,6 +23,7 @@ These steps will set up the project environment.
 3.  **Install Dependencies:**
     ```bash
     pip install -r requirements.txt
+    pip install -e /Users/craig/Python/mymodelzoo
     ```
 
 ---

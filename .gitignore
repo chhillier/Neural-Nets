@@ -1,5 +1,13 @@
-# Python virtual environment
+# Virtual Environment
 .venv/
 
 # Python cache
 __pycache__/
+
+# OS specific
+.DS_Store
+
+# Project outputs and data
+data/
+models/
+outputs/

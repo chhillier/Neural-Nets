@@ -1,0 +1,23 @@
+{
+    "objectives": {
+        "mean_cv_accuracy": 0.8082666666666666,
+        "std_dev": 0.003828039823315444,
+        "mean_gap": 0.024283333333333323
+    },
+    "hyperparameters": {
+        "activation_name": "GELU",
+        "n_conv_blocks": 3,
+        "base_channels": 19,
+        "block_conv_layers": 1,
+        "kernel_size": 5,
+        "n_fc_layers": 2,
+        "dropout_rate": 0.3832290311184182,
+        "fc_size": 65,
+        "optimizer_name": "AdamW",
+        "lr": 0.00026587543983272726,
+        "weight_decay": 2.310201887845294e-06,
+        "scheduler_name": "CosineAnnealingLR",
+        "scheduler_t_max": 31,
+        "batch_size": 64
+    }
+}
