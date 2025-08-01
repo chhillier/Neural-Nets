@@ -1,9 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, Subset
-from torchvision.datasets import FashionMNIST
-import torchvision.transforms as transforms
+from torch.utils.data import DataLoader, Subset, TensorDataset
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,7 +12,7 @@ import os
 import random
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import classification_report
-from mymodelzoo.cnn import DynamicCNN
+from mymodelzoo.cnn1D import DynamicCNN
 
 try:
     from optuna.visualization import plot_param_importances, plot_pareto_front
@@ -67,7 +65,7 @@ class PyTorchTrainer:
         self.model.train()
         running_loss, correct, total = 0.0, 0, 0
         for features, labels in data_loader:
-            features, labels = features.to(self.device), labels.to(self.device)
+            features, labels = features.to(self.device, dtype=torch.float), labels.to(self.device, dtype = torch.long)
             self.optimizer.zero_grad()
             outputs = self.model(features)
             loss = self.criterion(outputs, labels)
@@ -136,12 +134,42 @@ class PyTorchTrainer:
         print("\n--- Final Model Evaluation on Test Set ---")
         print(classification_report(all_labels, all_preds, target_names=class_names, zero_division=0))
 
-def prepare_data():
-    """Loads and prepares the image dataset. **THIS IS THE ONLY FUNCTION TO CHANGE FOR A NEW DATASET**."""
-    # Load the raw datasets without any transformations
-    train_dataset = FashionMNIST(root='./data', train=True, download=True, transform=None)
-    test_dataset = FashionMNIST(root='./data', train=False, download=True, transform=None)
-    class_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
+def prepare_data(x_path="../Data-Generation/outputs/cnn_ready_data_X.npy", y_path="../Data-Generation/outputs/cnn_ready_data_y.npy"):
+    """Loads the pre-processed EEG data, splits it, and creates PyTorch Datasets."""
+    print("--- Loading and preparing custom EEG data ---")
+    try:
+        X = np.load(x_path)
+        y = np.load(y_path)
+    except FileNotFoundError:
+        print(f"Error: Make sure '{x_path}' and '{y_path}' are in the correct directory.")
+        exit()
+        
+    print(f"Loaded data shapes: X={X.shape}, y={y.shape}")
+
+    # Split data into training (80%) and testing (20%) sets
+    # Stratify ensures the class distribution is the same in train and test sets
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=73125, stratify=y
+    )
+    print("Saving test split to files for XAI analysis...")
+    np.save("test data/X_test.npy", X_test)
+    np.save("test data/y_test.npy", y_test)
+    
+    # Convert numpy arrays to PyTorch tensors
+    X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+    y_train_tensor = torch.tensor(y_train, dtype=torch.long)
+    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+    y_test_tensor = torch.tensor(y_test, dtype=torch.long)
+    
+    # Create TensorDataset objects
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+    
+    # Define the class names based on the converter script's output
+    # IMPORTANT: This order must match the label encoding from the converter
+    class_names = ['Brain Rot', 'Brain Tumor', 'Metabolic Encephalopathy', 'Normal', 'Sleep Disorder']
+    
+    print("Data preparation complete.")
     return train_dataset, test_dataset, class_names
 
 def plot_history(history):
@@ -162,8 +190,8 @@ def plot_history(history):
 def objective(trial, full_train_dataset, input_shape, num_classes, num_epochs, device, n_splits):
     params = define_hyperparameters(trial)
     
-    kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=72125)
-    targets = full_train_dataset.targets
+    kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=73125)
+    targets = full_train_dataset.tensors[1]
     fold_val_accuracies, fold_train_accuracies = [], []
 
     for train_index, val_index in kf.split(np.zeros(len(targets)), targets):
@@ -175,7 +203,7 @@ def objective(trial, full_train_dataset, input_shape, num_classes, num_epochs, d
         fold_scheduler = optim.lr_scheduler.CosineAnnealingLR(fold_optimizer, T_max=num_epochs)
 
         trainer = PyTorchTrainer(fold_model, nn.CrossEntropyLoss(), fold_optimizer, fold_scheduler, device)
-        val_acc, train_acc = trainer.train(train_loader, val_loader, num_epochs, patience=7)
+        val_acc, train_acc = trainer.train(train_loader, val_loader, num_epochs, patience=10)
         fold_val_accuracies.append(val_acc)
         fold_train_accuracies.append(train_acc)
     
@@ -194,40 +222,36 @@ def print_progress(study, trial):
     if study.best_trials:
         print(f"  Current Pareto front size: {len(study.best_trials)}")
 
-if __name__ == "__main__":
-    LOAD_PARAMS_FROM_FILE = False
-    PARAMS_PREFIX = "outputs/nas_best_hyperparameters_3obj"
-    MODEL_PREFIX = "models/nas_best_model_3obj"
-    
-    N_TRIALS = 3
-    NUM_EPOCHS_OPTUNA = 5
-    N_SPLITS_CV = 3
-    NUM_EPOCHS_FINAL = 5
-    FINAL_MODEL_PATIENCE = 12
 
-    set_seed(42)
+if __name__ == "__main__":
+    LOAD_PARAMS_FROM_FILE = True
+    PARAMS_PREFIX = "outputs/nas_best_hyperparameters_3obj_1D_2Feature_Signal"
+    MODEL_PREFIX = "models/nas_best_model_3obj_1D_2Feature_Signal"
+    
+    N_TRIALS = 50
+    NUM_EPOCHS_OPTUNA = 50
+    N_SPLITS_CV = 5
+    NUM_EPOCHS_FINAL = 50
+    FINAL_MODEL_PATIENCE = 10
+
+    set_seed(73125)
     os.makedirs(os.path.dirname(PARAMS_PREFIX), exist_ok=True)
     os.makedirs(os.path.dirname(MODEL_PREFIX), exist_ok=True)
     
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {DEVICE} 🚀")
 
+    # --- UPDATED DATA LOADING ---
     train_dataset, test_dataset, class_names = prepare_data()
-    print("Calculating dataset statistics from training data...")
-    train_data_tensors = torch.stack([transforms.ToTensor()(img) for img, label in train_dataset])
-
-    mean = train_data_tensors.mean()
-    std = train_data_tensors.std()
-    print(f"--> Calculated Mean: {mean:.4f}, Std: {std:.4f}")
-
-    data_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((mean,), (std,)) # Use the calculated mean and std
-    ])
-
-    train_dataset.transform = data_transform
-    test_dataset.transform = data_transform
-    input_shape, num_classes = (1, 28, 28), len(class_names)
+    
+    # Dynamically get input shape and number of classes from the loaded data
+    # Shape from loader: (N, Timesteps, Features)
+    # Shape for Conv1d: (Features, Timesteps)
+    sample_x, _ = train_dataset[0]
+    num_timesteps, num_features = sample_x.shape
+    input_shape = (num_features, num_timesteps) 
+    num_classes = len(class_names)
+    print(f"Input shape for CNN: {input_shape} | Number of classes: {num_classes}")
     
     params_file_to_load = f"{PARAMS_PREFIX}_latest.json"
 
@@ -235,18 +259,13 @@ if __name__ == "__main__":
         print(f"--- Loading results from {params_file_to_load} ---")
         with open(params_file_to_load, 'r') as f:
             saved_results = json.load(f)
-        
-        # Extract the hyperparameters for training
         best_params = saved_results['hyperparameters']
-        
-        # Print the loaded objectives for confirmation
         print("Objectives from loaded file:")
         for key, value in saved_results['objectives'].items():
             print(f"  - {key}: {value:.4f}")
     else:
         print(f"\n--- Starting Optuna NAS with {N_TRIALS} trials ---")
-        n_startup = N_TRIALS // 2
-        sampler = TPESampler(n_startup_trials=n_startup, seed=42)
+        sampler = TPESampler(n_startup_trials=max(1, N_TRIALS // 2), seed=73125)
         
         study = optuna.create_study(
             directions=['maximize', 'minimize', 'minimize'],
@@ -267,15 +286,10 @@ if __name__ == "__main__":
             plot_param_importances(study, target=lambda t: t.values[0], target_name="Mean Acc").show()
 
         print("\n--- Selecting Best Trial from Pareto Front ---")
-        
-
         stable_trials = [t for t in study.best_trials if t.values[1] < 0.05]
         if not stable_trials: stable_trials = study.best_trials
-        
         generalizing_trials = [t for t in stable_trials if t.values[2] < 0.10]
         if not generalizing_trials: generalizing_trials = stable_trials
-
-        # From the best candidates, pick the most accurate one
         best_trial = max(generalizing_trials, key=lambda t: t.values[0])
         best_params = best_trial.params
         
@@ -286,11 +300,7 @@ if __name__ == "__main__":
         print(f"  - Std Dev:          {std:.4f}")
         print(f"  - Train-Val Gap:    {gap:.4f}")
         results_to_save = {
-            "objectives": {
-                "mean_cv_accuracy": acc,
-                "std_dev": std,
-                "mean_gap": gap
-            },
+            "objectives": {"mean_cv_accuracy": acc, "std_dev": std, "mean_gap": gap},
             "hyperparameters": best_params
         }
         
@@ -300,7 +310,13 @@ if __name__ == "__main__":
     print("\n--- Training final model with best discovered architecture ---")
     final_model = DynamicCNN(best_params, input_shape, num_classes)
     
-    train_indices, val_indices = train_test_split(list(range(len(train_dataset))), test_size=0.15, stratify=train_dataset.targets, random_state=42)
+    # For the final run, split the full training data into a new train and validation set
+    train_indices, val_indices = train_test_split(
+        list(range(len(train_dataset))), 
+        test_size=0.15, 
+        stratify=train_dataset.tensors[1].numpy(), 
+        random_state=73125
+    )
     final_train_loader = DataLoader(Subset(train_dataset, train_indices), batch_size=best_params['batch_size'], shuffle=True)
     final_val_loader = DataLoader(Subset(train_dataset, val_indices), batch_size=best_params['batch_size'])
     final_test_loader = DataLoader(test_dataset, batch_size=best_params['batch_size'])
