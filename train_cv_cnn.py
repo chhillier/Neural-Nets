@@ -31,8 +31,8 @@ def set_seed(seed):
 def define_hyperparameters(trial: optuna.trial.Trial):
     params = {}
     params['activation_name'] = trial.suggest_categorical('activation_name', ['ReLU', 'GELU', 'SiLU'])
-    params['n_conv_blocks'] = trial.suggest_int('n_conv_blocks', 2, 4)
-    params['base_channels'] = trial.suggest_int('base_channels', 16, 48, log=True)
+    params['n_conv_blocks'] = trial.suggest_int('n_conv_blocks', 3, 6)
+    params['base_channels'] = trial.suggest_int('base_channels', 24, 64, log=True)
     params['block_conv_layers'] = trial.suggest_int('block_conv_layers', 1, 2)
     params['kernel_size'] = trial.suggest_categorical('kernel_size', [3, 5])
     params['n_fc_layers'] = trial.suggest_int('n_fc_layers', 1, 2)
@@ -52,6 +52,7 @@ def define_hyperparameters(trial: optuna.trial.Trial):
 
 
 # --- TRAINER CLASS ---
+# --- TRAINER CLASS ---
 class PyTorchTrainer:
     def __init__(self, model, criterion, optimizer, scheduler, device):
         self.model = model.to(device)
@@ -59,13 +60,15 @@ class PyTorchTrainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.device = device
-        self.history = {'train_loss': [], 'val_loss': [], 'train_accuracy': [], 'val_accuracy': []}
+        self.history = {'train_loss': [], 'val_loss': [], 'train_accuracy': [], 'val_accuracy': [], 'lr': []}
 
     def train_epoch(self, data_loader):
         self.model.train()
         running_loss, correct, total = 0.0, 0, 0
         for features, labels in data_loader:
-            features, labels = features.to(self.device, dtype=torch.float), labels.to(self.device, dtype = torch.long)
+            features = features.to(self.device, dtype=torch.float)
+            labels = labels.to(self.device, dtype=torch.long)
+            
             self.optimizer.zero_grad()
             outputs = self.model(features)
             loss = self.criterion(outputs, labels)
@@ -82,7 +85,8 @@ class PyTorchTrainer:
         running_loss, correct, total = 0.0, 0, 0
         with torch.no_grad():
             for features, labels in data_loader:
-                features, labels = features.to(self.device), labels.to(self.device)
+                features = features.to(self.device, dtype=torch.float)
+                labels = labels.to(self.device, dtype=torch.long)
                 outputs = self.model(features)
                 loss = self.criterion(outputs, labels)
                 running_loss += loss.item() * features.size(0)
@@ -91,19 +95,38 @@ class PyTorchTrainer:
                 correct += (predicted == labels).sum().item()
         return running_loss / total, correct / total
 
-    def train(self, train_loader, val_loader, num_epochs, patience, verbose=False):
+    def train(self, train_loader, val_loader, num_epochs, patience, warmup_epochs=5, verbose=False):
         best_val_loss, patience_counter, best_model_state = float('inf'), 0, None
         best_val_acc, train_acc_at_best = 0.0, 0.0
+        
+        # --- Learning Rate Warm-up Logic ---
+        base_lr = self.optimizer.param_groups[0]['lr']
+        warmup_start_lr = 1e-6
 
         for epoch in range(num_epochs):
+            # --- Warm-up phase ---
+            if epoch < warmup_epochs:
+                # Linearly increase the learning rate
+                lr = warmup_start_lr + (base_lr - warmup_start_lr) * (epoch / warmup_epochs)
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = lr
+            # --- Post-warm-up phase ---
+            elif epoch == warmup_epochs:
+                # Restore the base learning rate so the scheduler can take over
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = base_lr
+            
             train_loss, train_acc = self.train_epoch(train_loader)
             val_loss, val_acc = self.validate_epoch(val_loader)
+            
             self.history['train_loss'].append(train_loss)
             self.history['val_loss'].append(val_loss)
             self.history['train_accuracy'].append(train_acc)
             self.history['val_accuracy'].append(val_acc)
+            self.history['lr'].append(self.optimizer.param_groups[0]['lr'])
             
-            if self.scheduler:
+            # Only step the main scheduler after the warm-up is complete
+            if self.scheduler and epoch >= warmup_epochs:
                 self.scheduler.step()
 
             if val_loss < best_val_loss:
@@ -126,13 +149,14 @@ class PyTorchTrainer:
         all_preds, all_labels = [], []
         with torch.no_grad():
             for features, labels in test_loader:
-                features, labels = features.to(self.device), labels.to(self.device)
+                features = features.to(self.device, dtype=torch.float)
+                labels = labels.to(self.device, dtype=torch.long)
                 outputs = self.model(features)
                 _, predicted = torch.max(outputs.data, 1)
                 all_preds.extend(predicted.cpu().numpy())
                 all_labels.extend(labels.cpu().numpy())
         print("\n--- Final Model Evaluation on Test Set ---")
-        print(classification_report(all_labels, all_preds, target_names=class_names, zero_division=0))
+        print(classification_report(all_preds, all_preds, target_names=class_names, zero_division=0))
 
 def prepare_data(x_path="../Data-Generation/outputs/cnn_ready_data_X.npy", y_path="../Data-Generation/outputs/cnn_ready_data_y.npy"):
     """Loads the pre-processed EEG data, splits it, and creates PyTorch Datasets."""
@@ -173,17 +197,24 @@ def prepare_data(x_path="../Data-Generation/outputs/cnn_ready_data_X.npy", y_pat
     return train_dataset, test_dataset, class_names
 
 def plot_history(history):
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(22, 5))
     ax1.plot(history['train_loss'], label='Train Loss')
     ax1.plot(history['val_loss'], label='Validation Loss')
     ax1.set_title('Model Loss')
     ax1.legend()
     ax1.grid(True)
+    
     ax2.plot(history['train_accuracy'], label='Train Accuracy')
     ax2.plot(history['val_accuracy'], label='Validation Accuracy')
     ax2.set_title('Model Accuracy')
     ax2.legend()
     ax2.grid(True)
+
+    ax3.plot(history['lr'], label='Learning Rate')
+    ax3.set_title('Learning Rate Schedule')
+    ax3.legend()
+    ax3.grid(True)
+
     plt.show()
 
 # --- OBJECTIVE FUNCTION ---
@@ -203,7 +234,7 @@ def objective(trial, full_train_dataset, input_shape, num_classes, num_epochs, d
         fold_scheduler = optim.lr_scheduler.CosineAnnealingLR(fold_optimizer, T_max=num_epochs)
 
         trainer = PyTorchTrainer(fold_model, nn.CrossEntropyLoss(), fold_optimizer, fold_scheduler, device)
-        val_acc, train_acc = trainer.train(train_loader, val_loader, num_epochs, patience=10)
+        val_acc, train_acc = trainer.train(train_loader, val_loader, num_epochs, patience=10, warmup_epochs= 5)
         fold_val_accuracies.append(val_acc)
         fold_train_accuracies.append(train_acc)
     
@@ -221,14 +252,27 @@ def print_progress(study, trial):
         print(f"  Values: (Acc: {acc:.4f}, Std: {std:.4f}, Gap: {gap:.4f})")
     if study.best_trials:
         print(f"  Current Pareto front size: {len(study.best_trials)}")
+        
+        # Apply the same selection logic to find the current best candidate
+        stable_trials = [t for t in study.best_trials if t.values[1] < 0.05]
+        if not stable_trials: stable_trials = study.best_trials
+        
+        generalizing_trials = [t for t in stable_trials if t.values[2] < 0.10]
+        if not generalizing_trials: generalizing_trials = stable_trials
+
+        best_so_far = max(generalizing_trials, key=lambda t: t.values[0])
+        
+        best_acc, best_std, best_gap = best_so_far.values
+        print(f"  Best trial so far (#{best_so_far.number}): Acc: {best_acc:.4f}, Std: {best_std:.4f}, Gap: {best_gap:.4f}")
+
 
 
 if __name__ == "__main__":
     LOAD_PARAMS_FROM_FILE = True
-    PARAMS_PREFIX = "outputs/nas_best_hyperparameters_3obj_1D_2Feature_Signal"
-    MODEL_PREFIX = "models/nas_best_model_3obj_1D_2Feature_Signal"
+    PARAMS_PREFIX = "outputs/nas_best_hyperparameters_3obj_1D_2Feature_Signal_Second_Pass_100_Trials"
+    MODEL_PREFIX = "models/nas_best_model_3obj_1D_2Feature_Signal_Second_Pass_100_Trials"
     
-    N_TRIALS = 50
+    N_TRIALS = 100
     NUM_EPOCHS_OPTUNA = 50
     N_SPLITS_CV = 5
     NUM_EPOCHS_FINAL = 50
@@ -328,7 +372,7 @@ if __name__ == "__main__":
         final_scheduler = optim.lr_scheduler.CosineAnnealingLR(final_optimizer, T_max=NUM_EPOCHS_FINAL)
 
     final_trainer = PyTorchTrainer(final_model, nn.CrossEntropyLoss(), final_optimizer, final_scheduler, DEVICE)
-    final_trainer.train(final_train_loader, final_val_loader, NUM_EPOCHS_FINAL, patience=FINAL_MODEL_PATIENCE, verbose=True)
+    final_trainer.train(final_train_loader, final_val_loader, NUM_EPOCHS_FINAL, patience=FINAL_MODEL_PATIENCE,warmup_epochs=5, verbose=True)
     
     plot_history(final_trainer.history)
     final_trainer.evaluate(final_test_loader, class_names=class_names)
