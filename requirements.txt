@@ -13,16 +13,18 @@ Mako==1.3.10
 MarkupSafe==3.0.2
 matplotlib==3.10.3
 mpmath==1.3.0
--e git+https://github.com/chhillier/mymodelzoo@d5b3d3ad0144df30630a3be97725ee402b582120#egg=mymodelzoo
+-e git+https://github.com/chhillier/mymodelzoo@5ccd48cf2862522f8751b70195dd778c2343fe1e#egg=mymodelzoo
 narwhals==1.47.1
 networkx==3.5
 numpy==2.3.1
 optuna==4.4.0
 packaging==25.0
+pandas==2.3.1
 pillow==11.3.0
 plotly==6.2.0
 pyparsing==3.2.3
 python-dateutil==2.9.0.post0
+pytz==2025.2
 PyYAML==6.0.2
 scikit-learn==1.7.0
 scipy==1.16.0
@@ -35,3 +37,4 @@ torch==2.7.1
 torchvision==0.22.1
 tqdm==4.67.1
 typing_extensions==4.14.1
+tzdata==2025.2

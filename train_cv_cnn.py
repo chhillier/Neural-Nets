@@ -13,6 +13,7 @@ import random
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.metrics import classification_report
 from mymodelzoo.cnn1D import DynamicCNN
+import pandas as pd
 
 try:
     from optuna.visualization import plot_param_importances, plot_pareto_front
@@ -156,7 +157,7 @@ class PyTorchTrainer:
                 all_preds.extend(predicted.cpu().numpy())
                 all_labels.extend(labels.cpu().numpy())
         print("\n--- Final Model Evaluation on Test Set ---")
-        print(classification_report(all_preds, all_preds, target_names=class_names, zero_division=0))
+        print(classification_report(all_labels, all_preds, target_names=class_names, zero_division=0))
 
 def prepare_data(x_path="../Data-Generation/outputs/cnn_ready_data_X.npy", y_path="../Data-Generation/outputs/cnn_ready_data_y.npy"):
     """Loads the pre-processed EEG data, splits it, and creates PyTorch Datasets."""
@@ -167,6 +168,15 @@ def prepare_data(x_path="../Data-Generation/outputs/cnn_ready_data_X.npy", y_pat
     except FileNotFoundError:
         print(f"Error: Make sure '{x_path}' and '{y_path}' are in the correct directory.")
         exit()
+
+    print("\nClass distribution of the FULL dataset (before splitting):")
+    # We need the class names to map the integer labels back
+    class_names_map = {0: 'Brain Rot', 1: 'Brain Tumor', 2: 'Metabolic Encephalopathy', 3: 'Normal', 4: 'Sleep Disorder'}
+    print(pd.Series(y).map(class_names_map).value_counts())
+    print("-" * 50)
+    # ---------------------------------------------
+        
+    print(f"Loaded data shapes: X={X.shape}, y={y.shape}")
         
     print(f"Loaded data shapes: X={X.shape}, y={y.shape}")
 
@@ -268,11 +278,11 @@ def print_progress(study, trial):
 
 
 if __name__ == "__main__":
-    LOAD_PARAMS_FROM_FILE = True
+    LOAD_PARAMS_FROM_FILE = False
     PARAMS_PREFIX = "outputs/nas_best_hyperparameters_3obj_1D_2Feature_Signal_Second_Pass_100_Trials"
     MODEL_PREFIX = "models/nas_best_model_3obj_1D_2Feature_Signal_Second_Pass_100_Trials"
     
-    N_TRIALS = 100
+    N_TRIALS = 50
     NUM_EPOCHS_OPTUNA = 50
     N_SPLITS_CV = 5
     NUM_EPOCHS_FINAL = 50
